@@ -2,6 +2,7 @@ services:
   - type: web
     name: anilar-bulutta-clone
     runtime: node
+    plan: free
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /healthz
