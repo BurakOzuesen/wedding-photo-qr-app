@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Etkinlik Hazir</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <section class="card">
+        <h1>Etkinlik Hazir</h1>
+        <p><strong><%= event.eventName %></strong></p>
+        <% if (event.eventDate) { %>
+          <p class="muted"><%= event.eventDate %></p>
+        <% } %>
+
+        <img src="<%= qrDataUrl %>" alt="QR Code" class="qr" />
+
+        <div class="stack">
+          <label>
+            Misafir Linki
+            <input type="text" value="<%= joinUrl %>" readonly />
+          </label>
+          <label>
+            Admin Linki
+            <input type="text" value="<%= adminUrl %>" readonly />
+          </label>
+        </div>
+
+        <div class="row">
+          <a class="button ghost" href="/admin/<%= event.id %>?token=<%= token %>">Admin Galeri</a>
+          <a class="button" href="<%= joinUrl %>" target="_blank" rel="noopener">Misafir Sayfasi</a>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

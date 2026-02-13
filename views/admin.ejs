@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin - <%= event.eventName %></title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <section class="card">
+        <div class="row wrap between">
+          <div>
+            <h1><%= event.eventName %></h1>
+            <% if (event.eventDate) { %>
+              <p class="muted"><%= event.eventDate %></p>
+            <% } %>
+          </div>
+          <a class="button ghost" href="/">Yeni Etkinlik</a>
+        </div>
+
+        <div class="row wrap">
+          <img src="<%= qrDataUrl %>" alt="QR Code" class="qr small" />
+          <div class="stack grow">
+            <label>
+              Misafir Linki
+              <input type="text" readonly value="<%= joinUrl %>" />
+            </label>
+            <label>
+              Admin Token
+              <input type="text" readonly value="<%= token %>" />
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Gelenler (<%= uploads.length %>)</h2>
+
+        <% if (!uploads.length) { %>
+          <p class="muted">Henuz yukleme yok.</p>
+        <% } else { %>
+          <div class="grid">
+            <% uploads.forEach((item) => { %>
+              <article class="media-card">
+                <% if (item.viewUrl) { %>
+                  <% if (item.mimeType.startsWith("image/")) { %>
+                    <img src="<%= item.viewUrl %>" alt="<%= item.originalName %>" />
+                  <% } else { %>
+                    <video controls preload="metadata">
+                      <source src="<%= item.viewUrl %>" type="<%= item.mimeType %>" />
+                    </video>
+                  <% } %>
+                <% } else { %>
+                  <div class="meta">
+                    <p class="muted small">Dosya onizlemesi olusturulamadi.</p>
+                  </div>
+                <% } %>
+                <div class="meta">
+                  <p><%= item.originalName %></p>
+                  <p class="muted small">
+                    <%= item.guestName ? item.guestName : "Anonim" %> - <%= new Date(item.uploadedAt).toLocaleString("tr-TR") %>
+                  </p>
+                </div>
+              </article>
+            <% }) %>
+          </div>
+        <% } %>
+      </section>
+    </main>
+  </body>
+</html>

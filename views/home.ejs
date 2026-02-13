@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Anilar Bulutta Clone</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <section class="card">
+        <h1>Etkinlik Olustur</h1>
+        <p class="muted">
+          Misafirlere QR ver, foto/video toplansin, tek galeride biriksin.
+        </p>
+
+        <form id="create-event-form" class="stack">
+          <label>
+            Etkinlik Adi
+            <input name="eventName" type="text" placeholder="Burak & Ayse Nisan" required />
+          </label>
+
+          <label>
+            Tarih
+            <input name="eventDate" type="text" placeholder="21 Haziran 2026" />
+          </label>
+
+          <label>
+            Etkinlik Sahibi
+            <input name="ownerName" type="text" placeholder="Burak" />
+          </label>
+
+          <button type="submit">Etkinlik Baslat</button>
+        </form>
+
+        <p class="muted small">
+          Not: Bu bir MVP iskeleti. Uygulamayi internetten erisilir bir sunucuya
+          koydugunda gercek bulut deneyimi olur.
+        </p>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("create-event-form");
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        const payload = Object.fromEntries(formData.entries());
+
+        const response = await fetch("/api/events", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          alert(data.error || "Etkinlik olusturulamadi");
+          return;
+        }
+
+        const token = new URL(data.adminUrl).searchParams.get("token");
+        window.location.href = `/created/${data.eventId}?token=${token}`;
+      });
+    </script>
+  </body>
+</html>

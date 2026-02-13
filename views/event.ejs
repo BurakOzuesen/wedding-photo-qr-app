@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= event.eventName %> - Yukleme</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <section class="card">
+        <h1><%= event.eventName %></h1>
+        <% if (event.eventDate) { %>
+          <p class="muted"><%= event.eventDate %></p>
+        <% } %>
+        <p class="muted">
+          Fotograflarini ve videolarini secip tek seferde yukleyebilirsin.
+        </p>
+
+        <form id="upload-form" class="stack">
+          <label>
+            Isim (opsiyonel)
+            <input name="guestName" type="text" placeholder="Ornek: Ali" />
+          </label>
+
+          <label>
+            Dosyalar
+            <input
+              name="files"
+              type="file"
+              multiple
+              accept="image/*,video/*"
+              required
+            />
+          </label>
+
+          <button type="submit">Yukle</button>
+        </form>
+
+        <p id="status" class="muted small">
+          Dosya limiti: <%= maxFileSizeMb %>MB (tek dosya)
+        </p>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("upload-form");
+      const statusEl = document.getElementById("status");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        statusEl.textContent = "Yukleniyor...";
+
+        const formData = new FormData(form);
+        const response = await fetch(`/api/e/<%= event.id %>/upload`, {
+          method: "POST",
+          body: formData
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          statusEl.textContent = data.error || "Yukleme basarisiz.";
+          return;
+        }
+
+        statusEl.textContent = `${data.uploadedCount} dosya basariyla yuklendi. Tesekkurler!`;
+        form.reset();
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: anilar-bulutta-clone
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 24
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: MAX_FILE_SIZE_MB
+        value: 200
+      - key: MAX_FILES_PER_REQUEST
+        value: 20
+      - key: SUPABASE_BUCKET
+        value: event-media
+      - key: SUPABASE_SIGNED_URL_TTL_SEC
+        value: 3600
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: BASE_URL
+        sync: false
