@@ -16,7 +16,10 @@
               <p class="muted"><%= event.eventDate %></p>
             <% } %>
           </div>
-          <a class="button ghost" href="/">Yeni Etkinlik</a>
+          <div class="row wrap">
+            <a class="button" href="/admin/<%= event.id %>/download.zip?token=<%= token %>">ZIP Indir</a>
+            <a class="button ghost" href="/">Yeni Etkinlik</a>
+          </div>
         </div>
 
         <div class="row wrap">

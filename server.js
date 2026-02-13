@@ -1,8 +1,10 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
+import archiver from "archiver";
 import dotenv from "dotenv";
 import express from "express";
 import multer from "multer";
@@ -278,6 +280,66 @@ app.get("/admin/:eventId", async (req, res, next) => {
   }
 });
 
+app.get("/admin/:eventId/download.zip", async (req, res, next) => {
+  const eventId = req.params.eventId;
+  const token = String(req.query.token || "");
+
+  try {
+    const event = await findEventById(eventId);
+    if (!event) {
+      res.status(404).send("Etkinlik bulunamadi.");
+      return;
+    }
+    if (event.adminToken !== token) {
+      res.status(403).send("Yetkisiz erisim.");
+      return;
+    }
+
+    const uploads = await listUploadsForEvent(eventId);
+    if (!uploads.length) {
+      res.status(404).send("Indirilecek dosya yok.");
+      return;
+    }
+
+    const safeEventName = sanitizeArchiveName(event.eventName || "anilar");
+    const zipFileName = `${safeEventName}-${eventId}.zip`;
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${zipFileName}"`);
+
+    const archive = archiver("zip", { zlib: { level: 9 } });
+    archive.on("warning", (error) => {
+      if (error.code !== "ENOENT") {
+        console.warn(error);
+      }
+    });
+    archive.on("error", (error) => {
+      console.error(error);
+      if (!res.headersSent) {
+        res.status(500).send("ZIP olusturulamadi.");
+        return;
+      }
+      res.destroy(error);
+    });
+
+    archive.pipe(res);
+
+    if (USING_SUPABASE) {
+      await appendSupabaseUploadsToArchive(archive, uploads);
+    } else {
+      appendLocalUploadsToArchive(archive, eventId, uploads);
+    }
+
+    await archive.finalize();
+  } catch (error) {
+    if (res.headersSent) {
+      res.destroy(error);
+      return;
+    }
+    next(error);
+  }
+});
+
 app.get("/admin/file/:eventId/:fileName", async (req, res) => {
   if (USING_SUPABASE) {
     res.status(404).send("Bu endpoint local depolama icindir.");
@@ -541,6 +603,89 @@ async function attachViewUrls(uploads, token) {
       item.storagePath
     )}?token=${encodeURIComponent(token)}`
   }));
+}
+
+async function appendSupabaseUploadsToArchive(archive, uploads) {
+  for (let index = 0; index < uploads.length; index += 1) {
+    const item = uploads[index];
+    const { data, error } = await supabase.storage
+      .from(SUPABASE_BUCKET)
+      .createSignedUrl(item.storagePath, SUPABASE_SIGNED_URL_TTL_SEC);
+
+    if (error || !data?.signedUrl) {
+      throw error || new Error("Supabase dosya URL olusturma hatasi.");
+    }
+
+    const response = await fetch(data.signedUrl);
+    if (!response.ok || !response.body) {
+      throw new Error(`Supabase dosya indirme hatasi: ${item.originalName}`);
+    }
+
+    archive.append(Readable.fromWeb(response.body), {
+      name: buildArchiveEntryName(item, index)
+    });
+  }
+}
+
+function appendLocalUploadsToArchive(archive, eventId, uploads) {
+  for (let index = 0; index < uploads.length; index += 1) {
+    const item = uploads[index];
+    const filePath = path.join(UPLOADS_DIR, eventId, item.storagePath);
+
+    if (!fs.existsSync(filePath)) {
+      continue;
+    }
+
+    archive.file(filePath, {
+      name: buildArchiveEntryName(item, index)
+    });
+  }
+}
+
+function buildArchiveEntryName(upload, index) {
+  const prefix = String(index + 1).padStart(3, "0");
+  const originalName = upload.originalName || path.basename(upload.storagePath || "");
+  const safeName = sanitizeArchiveName(originalName);
+
+  if (path.extname(safeName)) {
+    return `${prefix}-${safeName}`;
+  }
+
+  const fallbackExt =
+    path.extname(upload.storagePath || "") || getExtensionFromMime(upload.mimeType);
+  return `${prefix}-${safeName}${fallbackExt}`;
+}
+
+function getExtensionFromMime(mimeType = "") {
+  const extensions = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/heic": ".heic",
+    "image/heif": ".heif",
+    "image/gif": ".gif",
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/webm": ".webm"
+  };
+
+  return extensions[mimeType] || "";
+}
+
+function sanitizeArchiveName(value) {
+  if (typeof value !== "string") {
+    return "arsiv";
+  }
+
+  const safe = value
+    .normalize("NFKD")
+    .replace(/[^\x00-\x7F]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+
+  return safe || "arsiv";
 }
 
 function generateShortId() {

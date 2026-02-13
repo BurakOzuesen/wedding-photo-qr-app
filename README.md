@@ -8,6 +8,7 @@ QR kod ile etkinlikte misafirlerden foto/video toplama uygulamasi.
 - Etkinlige ozel misafir linki (`/e/:eventId`)
 - Coklu foto/video yukleme
 - Etkinlik sahibine ozel admin galeri (`/admin/:eventId?token=...`)
+- Admin panelden toplu ZIP indirme
 - QR kod uretimi
 - `local` veya `supabase` backend secimi
 
