@@ -38,14 +38,47 @@
       </section>
 
       <section class="card">
-        <h2>Gelenler (<%= uploads.length %>)</h2>
+        <div class="row wrap between">
+          <h2>Gelenler (<%= uploads.length %>)</h2>
+          <p id="gallery-visible-count" class="muted small"></p>
+        </div>
 
         <% if (!uploads.length) { %>
           <p class="muted">Henuz yukleme yok.</p>
         <% } else { %>
-          <div class="grid">
+          <div class="toolbar">
+            <label>
+              Ara
+              <input id="filter-query" type="search" placeholder="Dosya veya isim ara" />
+            </label>
+            <label>
+              Medya Tipi
+              <select id="filter-type">
+                <option value="all">Hepsi</option>
+                <option value="image">Sadece Foto</option>
+                <option value="video">Sadece Video</option>
+              </select>
+            </label>
+            <label>
+              Siralama
+              <select id="sort-order">
+                <option value="newest">En Yeni</option>
+                <option value="oldest">En Eski</option>
+                <option value="name-asc">Dosya Adi (A-Z)</option>
+                <option value="name-desc">Dosya Adi (Z-A)</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="grid" id="media-grid">
             <% uploads.forEach((item) => { %>
-              <article class="media-card">
+              <article
+                class="media-card"
+                data-mime="<%= item.mimeType %>"
+                data-name="<%= item.originalName %>"
+                data-guest="<%= item.guestName || '' %>"
+                data-uploaded-at="<%= item.uploadedAt %>"
+              >
                 <% if (item.viewUrl) { %>
                   <% if (item.mimeType.startsWith("image/")) { %>
                     <img src="<%= item.viewUrl %>" alt="<%= item.originalName %>" />
@@ -71,5 +104,73 @@
         <% } %>
       </section>
     </main>
+
+    <script>
+      const mediaGrid = document.getElementById("media-grid");
+      if (mediaGrid) {
+        const filterQuery = document.getElementById("filter-query");
+        const filterType = document.getElementById("filter-type");
+        const sortOrder = document.getElementById("sort-order");
+        const visibleCountEl = document.getElementById("gallery-visible-count");
+        const mediaCards = Array.from(mediaGrid.querySelectorAll(".media-card"));
+
+        const normalize = (value) => String(value || "").toLocaleLowerCase("tr-TR");
+
+        const getUploadedAt = (card) => {
+          const parsed = Date.parse(card.dataset.uploadedAt || "");
+          return Number.isNaN(parsed) ? 0 : parsed;
+        };
+
+        const sortCards = (cards, mode) =>
+          cards.slice().sort((cardA, cardB) => {
+            if (mode === "oldest") {
+              return getUploadedAt(cardA) - getUploadedAt(cardB);
+            }
+            if (mode === "name-asc") {
+              return normalize(cardA.dataset.name).localeCompare(normalize(cardB.dataset.name), "tr");
+            }
+            if (mode === "name-desc") {
+              return normalize(cardB.dataset.name).localeCompare(normalize(cardA.dataset.name), "tr");
+            }
+            return getUploadedAt(cardB) - getUploadedAt(cardA);
+          });
+
+        const applyGalleryControls = () => {
+          const query = normalize(filterQuery.value.trim());
+          const type = filterType.value;
+          const order = sortOrder.value;
+          let visibleCount = 0;
+
+          const sortedCards = sortCards(mediaCards, order);
+          sortedCards.forEach((card) => {
+            const mime = card.dataset.mime || "";
+            const name = normalize(card.dataset.name);
+            const guest = normalize(card.dataset.guest);
+
+            const typeMatch =
+              type === "all" ||
+              (type === "image" && mime.startsWith("image/")) ||
+              (type === "video" && mime.startsWith("video/"));
+
+            const queryMatch = !query || `${name} ${guest}`.includes(query);
+            const visible = typeMatch && queryMatch;
+
+            card.hidden = !visible;
+            mediaGrid.appendChild(card);
+
+            if (visible) {
+              visibleCount += 1;
+            }
+          });
+
+          visibleCountEl.textContent = `Gorunen: ${visibleCount}/${mediaCards.length}`;
+        };
+
+        filterQuery.addEventListener("input", applyGalleryControls);
+        filterType.addEventListener("change", applyGalleryControls);
+        sortOrder.addEventListener("change", applyGalleryControls);
+        applyGalleryControls();
+      }
+    </script>
   </body>
 </html>

@@ -34,38 +34,296 @@
             />
           </label>
 
-          <button type="submit">Yukle</button>
+          <button id="upload-button" type="submit">Yukle</button>
         </form>
 
-        <p id="status" class="muted small">
-          Dosya limiti: <%= maxFileSizeMb %>MB (tek dosya)
-        </p>
+        <div class="upload-feedback stack">
+          <div class="row wrap between">
+            <p id="status" class="muted small">
+              Dosya limiti: <%= maxFileSizeMb %>MB (tek dosya)
+            </p>
+            <button
+              id="retry-failed"
+              type="button"
+              class="button ghost small-button"
+              hidden
+            >
+              Basarisizlari Yeniden Dene
+            </button>
+          </div>
+
+          <div id="overall-progress-wrap" class="stack progress-wrap" hidden>
+            <div class="row between">
+              <p class="muted small">Toplam Ilerleme</p>
+              <p id="overall-progress-text" class="muted small">0%</p>
+            </div>
+            <progress id="overall-progress" max="100" value="0"></progress>
+          </div>
+
+          <div id="upload-list" class="upload-list"></div>
+        </div>
       </section>
     </main>
 
     <script>
       const form = document.getElementById("upload-form");
+      const guestInput = form.querySelector('input[name="guestName"]');
+      const fileInput = form.querySelector('input[name="files"]');
+      const uploadButton = document.getElementById("upload-button");
       const statusEl = document.getElementById("status");
+      const retryButton = document.getElementById("retry-failed");
+      const progressWrap = document.getElementById("overall-progress-wrap");
+      const overallProgressEl = document.getElementById("overall-progress");
+      const overallProgressTextEl = document.getElementById("overall-progress-text");
+      const uploadListEl = document.getElementById("upload-list");
+
+      const MAX_RETRY = 2;
+      const MAX_ATTEMPTS = MAX_RETRY + 1;
+
+      let lastGuestName = "";
+      let failedItems = [];
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
-        statusEl.textContent = "Yukleniyor...";
-
-        const formData = new FormData(form);
-        const response = await fetch(`/api/e/<%= event.id %>/upload`, {
-          method: "POST",
-          body: formData
-        });
-        const data = await response.json();
-
-        if (!response.ok) {
-          statusEl.textContent = data.error || "Yukleme basarisiz.";
+        const files = Array.from(fileInput.files || []);
+        if (!files.length) {
+          statusEl.textContent = "En az bir dosya secmelisin.";
           return;
         }
 
-        statusEl.textContent = `${data.uploadedCount} dosya basariyla yuklendi. Tesekkurler!`;
-        form.reset();
+        lastGuestName = guestInput.value.trim();
+        failedItems = [];
+        retryButton.hidden = true;
+        uploadListEl.innerHTML = "";
+        progressWrap.hidden = false;
+        setOverallProgress(0);
+        setBusy(true);
+
+        const queue = files.map((file) => createQueueItem(file));
+
+        try {
+          const result = await processQueue(queue);
+          failedItems = result.failedItems;
+          finalizeBatchStatus(result.successCount, result.failedItems.length, queue.length);
+
+          if (failedItems.length) {
+            retryButton.hidden = false;
+            retryButton.textContent = `Basarisizlari Yeniden Dene (${failedItems.length})`;
+          } else {
+            form.reset();
+          }
+        } finally {
+          setBusy(false);
+        }
       });
+
+      retryButton.addEventListener("click", async () => {
+        if (!failedItems.length) {
+          return;
+        }
+
+        const retryQueue = failedItems.slice();
+        failedItems = [];
+        retryButton.hidden = true;
+        statusEl.textContent = `Basarisiz dosyalar yeniden deneniyor (${retryQueue.length})...`;
+        setOverallProgress(0);
+        setBusy(true);
+
+        try {
+          const result = await processQueue(retryQueue);
+          failedItems = result.failedItems;
+          if (failedItems.length) {
+            statusEl.textContent = `${result.successCount}/${retryQueue.length} dosya kurtarildi. ${failedItems.length} dosya hala basarisiz.`;
+            retryButton.hidden = false;
+            retryButton.textContent = `Basarisizlari Yeniden Dene (${failedItems.length})`;
+          } else {
+            statusEl.textContent = "Tum basarisiz dosyalar basariyla yuklendi.";
+            form.reset();
+          }
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      function createQueueItem(file) {
+        const itemEl = document.createElement("article");
+        itemEl.className = "upload-item pending";
+
+        const headerEl = document.createElement("div");
+        headerEl.className = "row wrap between";
+
+        const nameEl = document.createElement("p");
+        nameEl.className = "upload-name";
+        nameEl.textContent = file.name;
+
+        const stateEl = document.createElement("p");
+        stateEl.className = "upload-state muted small";
+        stateEl.textContent = "Sirada";
+
+        const progressEl = document.createElement("progress");
+        progressEl.max = 100;
+        progressEl.value = 0;
+
+        headerEl.appendChild(nameEl);
+        headerEl.appendChild(stateEl);
+        itemEl.appendChild(headerEl);
+        itemEl.appendChild(progressEl);
+        uploadListEl.appendChild(itemEl);
+
+        return {
+          file,
+          itemEl,
+          stateEl,
+          progressEl
+        };
+      }
+
+      async function processQueue(queue) {
+        let successCount = 0;
+        const failedInThisRun = [];
+        const total = queue.length;
+
+        if (!total) {
+          return { successCount, failedItems: failedInThisRun };
+        }
+
+        for (let index = 0; index < queue.length; index += 1) {
+          const item = queue[index];
+
+          try {
+            await uploadWithRetry(item, (percent, attempt) => {
+              const safePercent = clampPercent(percent);
+              const attemptLabel =
+                attempt > 1
+                  ? `Yukleniyor (deneme ${attempt}/${MAX_ATTEMPTS})`
+                  : "Yukleniyor";
+
+              setItemState(item, "running", attemptLabel, safePercent);
+              const overallPercent = ((index + safePercent / 100) / total) * 100;
+              setOverallProgress(overallPercent);
+            });
+
+            successCount += 1;
+            setItemState(item, "ok", "Basarili", 100);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Yukleme basarisiz.";
+            setItemState(item, "failed", message, 0);
+            failedInThisRun.push(item);
+          } finally {
+            setOverallProgress(((index + 1) / total) * 100);
+          }
+        }
+
+        return { successCount, failedItems: failedInThisRun };
+      }
+
+      async function uploadWithRetry(item, onProgress) {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+          try {
+            return await uploadSingleFile(item.file, onProgress, attempt);
+          } catch (error) {
+            if (attempt >= MAX_ATTEMPTS) {
+              throw error;
+            }
+            setItemState(item, "pending", `Tekrar deneniyor (${attempt}/${MAX_RETRY})`, 0);
+            await wait(500 * attempt);
+          }
+        }
+
+        throw new Error("Yukleme basarisiz.");
+      }
+
+      function uploadSingleFile(file, onProgress, attempt) {
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", `/api/e/<%= event.id %>/upload`);
+          xhr.timeout = 180000;
+
+          xhr.upload.addEventListener("progress", (event) => {
+            if (!event.lengthComputable) {
+              return;
+            }
+            const percent = Math.round((event.loaded / event.total) * 100);
+            onProgress(percent, attempt);
+          });
+
+          xhr.addEventListener("load", () => {
+            const body = parseJsonSafe(xhr.responseText);
+            if (xhr.status >= 200 && xhr.status < 300) {
+              onProgress(100, attempt);
+              resolve(body || {});
+              return;
+            }
+            reject(new Error((body && body.error) || `Yukleme hatasi (${xhr.status})`));
+          });
+
+          xhr.addEventListener("error", () => {
+            reject(new Error("Ag baglantisi sirasinda hata olustu."));
+          });
+
+          xhr.addEventListener("timeout", () => {
+            reject(new Error("Yukleme zaman asimina ugradi."));
+          });
+
+          const formData = new FormData();
+          if (lastGuestName) {
+            formData.append("guestName", lastGuestName);
+          }
+          formData.append("files", file);
+          xhr.send(formData);
+        });
+      }
+
+      function setItemState(item, state, text, progress) {
+        item.itemEl.classList.remove("pending", "running", "ok", "failed");
+        item.itemEl.classList.add(state);
+        item.stateEl.textContent = text;
+        item.progressEl.value = clampPercent(progress);
+      }
+
+      function setOverallProgress(percent) {
+        const safePercent = clampPercent(percent);
+        overallProgressEl.value = safePercent;
+        overallProgressTextEl.textContent = `${Math.round(safePercent)}%`;
+      }
+
+      function setBusy(isBusy) {
+        uploadButton.disabled = isBusy;
+        fileInput.disabled = isBusy;
+        guestInput.disabled = isBusy;
+        retryButton.disabled = isBusy;
+        uploadButton.textContent = isBusy ? "Yukleniyor..." : "Yukle";
+      }
+
+      function finalizeBatchStatus(successCount, failedCount, totalCount) {
+        if (!failedCount) {
+          statusEl.textContent = `${successCount}/${totalCount} dosya basariyla yuklendi. Tesekkurler!`;
+          return;
+        }
+        statusEl.textContent = `${successCount}/${totalCount} dosya yuklendi. ${failedCount} dosya basarisiz oldu.`;
+      }
+
+      function clampPercent(value) {
+        if (!Number.isFinite(value)) {
+          return 0;
+        }
+        return Math.max(0, Math.min(100, value));
+      }
+
+      function parseJsonSafe(value) {
+        if (!value) {
+          return null;
+        }
+        try {
+          return JSON.parse(value);
+        } catch {
+          return null;
+        }
+      }
+
+      function wait(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
     </script>
   </body>
 </html>

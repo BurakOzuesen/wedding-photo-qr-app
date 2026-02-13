@@ -65,6 +65,7 @@ label {
 }
 
 input,
+select,
 button,
 .button {
   border-radius: 12px;
@@ -75,6 +76,11 @@ button,
 
 input {
   width: 100%;
+}
+
+select {
+  width: 100%;
+  background: #fff;
 }
 
 button,
@@ -110,6 +116,80 @@ button,
 
 .grow {
   flex: 1;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.progress-wrap {
+  gap: 8px;
+}
+
+progress {
+  width: 100%;
+  height: 10px;
+  border: 0;
+}
+
+progress::-webkit-progress-bar {
+  background: #e5e7eb;
+  border-radius: 99px;
+}
+
+progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 99px;
+}
+
+progress::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: 99px;
+}
+
+.upload-feedback {
+  margin-top: 14px;
+}
+
+.upload-list {
+  display: grid;
+  gap: 8px;
+}
+
+.upload-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: #fff;
+  display: grid;
+  gap: 8px;
+}
+
+.upload-item.running {
+  border-color: #93c5fd;
+}
+
+.upload-item.ok {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.upload-item.failed {
+  border-color: #fca5a5;
+  background: #fff1f2;
+}
+
+.upload-name {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.small-button {
+  font-size: 13px;
+  padding: 8px 10px;
 }
 
 .qr {
