@@ -7,7 +7,7 @@ QR kod ile etkinlikte misafirlerden foto/video toplama uygulamasi.
 - Etkinlik olusturma
 - Etkinlige ozel misafir linki (`/e/:eventId`)
 - Coklu foto/video yukleme
-- Etkinlik sahibine ozel admin galeri (`/admin/:eventId?token=...`)
+- Etkinlik sahibine ozel admin galeri (`/admin/:eventId`, HttpOnly cookie auth)
 - Admin panelden toplu ZIP indirme
 - QR kod uretimi
 - `local` veya `supabase` backend secimi
@@ -46,6 +46,10 @@ SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
 SUPABASE_BUCKET=event-media
 SUPABASE_SIGNED_URL_TTL_SEC=3600
+ADMIN_COOKIE_TTL_SEC=2592000
+RATE_LIMIT_WINDOW_SEC=60
+RATE_LIMIT_EVENT_MAX=20
+RATE_LIMIT_UPLOAD_MAX=60
 ```
 
 ## 3) Render Deploy
@@ -59,6 +63,10 @@ Gerekli env var'lar:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_BUCKET=event-media`
 - `BASE_URL=https://<render-app-domain>`
+- `ADMIN_COOKIE_TTL_SEC=2592000`
+- `RATE_LIMIT_WINDOW_SEC=60`
+- `RATE_LIMIT_EVENT_MAX=20`
+- `RATE_LIMIT_UPLOAD_MAX=60`
 
 Start command: `npm start`
 
@@ -71,10 +79,14 @@ Railway'de repo'yu bagla, asagidaki env var'lari ekle ve deploy et:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_BUCKET=event-media`
 - `BASE_URL=https://<railway-app-domain>`
+- `ADMIN_COOKIE_TTL_SEC=2592000`
+- `RATE_LIMIT_WINDOW_SEC=60`
+- `RATE_LIMIT_EVENT_MAX=20`
+- `RATE_LIMIT_UPLOAD_MAX=60`
 
 Railway `npm start` komutunu otomatik algilar (gerekirse Start Command alanina `npm start` yaz).
 
 ## Notlar
 
-- Bu proje MVP'dir; production icin rate limit, malware scanning, boyut/format kurallari ve detayli auth eklenmeli.
-- Admin linkindeki `token` gizli kalmalidir.
+- Bu proje MVP'dir; temel rate limit + dosya signature kontrolu var, production icin malware scanning ve daha detayli auth katmanlari eklenmeli.
+- Eski `?token=` linkleri geriye donuk olarak calisir ama yeni akista admin yetkisi HttpOnly cerezde tutulur.

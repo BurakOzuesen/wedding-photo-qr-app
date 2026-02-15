@@ -17,7 +17,7 @@
             <% } %>
           </div>
           <div class="row wrap">
-            <a class="button" href="/admin/<%= event.id %>/download.zip?token=<%= token %>">ZIP Indir</a>
+            <a class="button" href="/admin/<%= event.id %>/download.zip">ZIP Indir</a>
             <a class="button ghost" href="/">Yeni Etkinlik</a>
           </div>
         </div>
@@ -29,10 +29,7 @@
               Misafir Linki
               <input type="text" readonly value="<%= joinUrl %>" />
             </label>
-            <label>
-              Admin Token
-              <input type="text" readonly value="<%= token %>" />
-            </label>
+            <p class="muted small">Admin oturumu bu tarayicida guvenli cerez ile korunur.</p>
           </div>
         </div>
       </section>

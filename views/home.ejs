@@ -59,8 +59,7 @@
           return;
         }
 
-        const token = new URL(data.adminUrl).searchParams.get("token");
-        window.location.href = `/created/${data.eventId}?token=${token}`;
+        window.location.href = data.createdUrl || `/created/${data.eventId}`;
       });
     </script>
   </body>

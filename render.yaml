@@ -19,6 +19,14 @@ services:
         value: event-media
       - key: SUPABASE_SIGNED_URL_TTL_SEC
         value: 3600
+      - key: ADMIN_COOKIE_TTL_SEC
+        value: 2592000
+      - key: RATE_LIMIT_WINDOW_SEC
+        value: 60
+      - key: RATE_LIMIT_EVENT_MAX
+        value: 20
+      - key: RATE_LIMIT_UPLOAD_MAX
+        value: 60
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY

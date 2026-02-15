@@ -28,6 +28,11 @@ const SUPABASE_BUCKET = String(process.env.SUPABASE_BUCKET || "event-media");
 const SUPABASE_SIGNED_URL_TTL_SEC = Number(
   process.env.SUPABASE_SIGNED_URL_TTL_SEC || 60 * 60
 );
+const ADMIN_COOKIE_TTL_SEC = Number(process.env.ADMIN_COOKIE_TTL_SEC || 60 * 60 * 24 * 30);
+const RATE_LIMIT_WINDOW_SEC = Number(process.env.RATE_LIMIT_WINDOW_SEC || 60);
+const RATE_LIMIT_EVENT_MAX = Number(process.env.RATE_LIMIT_EVENT_MAX || 20);
+const RATE_LIMIT_UPLOAD_MAX = Number(process.env.RATE_LIMIT_UPLOAD_MAX || 60);
+const ADMIN_COOKIE_PREFIX = "adm_";
 
 const USING_SUPABASE = STORAGE_BACKEND === "supabase";
 
@@ -44,6 +49,23 @@ app.set("trust proxy", 1);
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+
+const createEventRateLimiter = createRateLimiter({
+  key: "create-event",
+  windowSec: RATE_LIMIT_WINDOW_SEC,
+  maxRequests: RATE_LIMIT_EVENT_MAX,
+  message: "Cok fazla etkinlik olusturma istegi. Lutfen biraz bekle."
+});
+
+const uploadRateLimiter = createRateLimiter({
+  key: "upload",
+  windowSec: RATE_LIMIT_WINDOW_SEC,
+  maxRequests: RATE_LIMIT_UPLOAD_MAX,
+  message: "Cok fazla yukleme istegi. Lutfen biraz bekle.",
+  keyBuilder(req) {
+    return `${req.ip || "unknown"}:${req.params.eventId || "global"}`;
+  }
+});
 
 const fileFilter = (req, file, cb) => {
   const validType =
@@ -88,7 +110,7 @@ app.get("/healthz", (req, res) => {
   res.json({ ok: true, backend: STORAGE_BACKEND });
 });
 
-app.post("/api/events", async (req, res, next) => {
+app.post("/api/events", createEventRateLimiter, async (req, res, next) => {
   try {
     const eventName = sanitizeText(req.body.eventName, 120);
     const eventDate = sanitizeText(req.body.eventDate, 40);
@@ -101,11 +123,13 @@ app.post("/api/events", async (req, res, next) => {
 
     const event = await createEventRecord({ eventName, eventDate, ownerName });
     const baseUrl = getBaseUrl(req);
+    setAdminSessionCookie(req, res, event.id, event.adminToken);
 
     res.status(201).json({
       eventId: event.id,
       joinUrl: `${baseUrl}/e/${event.id}`,
-      adminUrl: `${baseUrl}/admin/${event.id}?token=${event.adminToken}`
+      createdUrl: `${baseUrl}/created/${event.id}`,
+      adminUrl: `${baseUrl}/admin/${event.id}`
     });
   } catch (error) {
     next(error);
@@ -114,21 +138,20 @@ app.post("/api/events", async (req, res, next) => {
 
 app.get("/created/:eventId", async (req, res, next) => {
   try {
-    const token = String(req.query.token || "");
     const eventId = req.params.eventId;
-    const event = await findEventById(eventId);
-
-    if (!event || event.adminToken !== token) {
-      res.status(403).send("Yetkisiz erisim.");
+    const auth = await authorizeAdminRequest(req, res, eventId);
+    if (!auth.ok) {
+      res.status(auth.status).send(auth.message);
       return;
     }
+    const event = auth.event;
 
     const baseUrl = getBaseUrl(req);
     const joinUrl = `${baseUrl}/e/${eventId}`;
-    const adminUrl = `${baseUrl}/admin/${eventId}?token=${token}`;
+    const adminUrl = `${baseUrl}/admin/${eventId}`;
     const qrDataUrl = await QRCode.toDataURL(joinUrl);
 
-    res.render("created", { event, joinUrl, adminUrl, qrDataUrl, token });
+    res.render("created", { event, joinUrl, adminUrl, qrDataUrl });
   } catch (error) {
     next(error);
   }
@@ -150,7 +173,7 @@ app.get("/e/:eventId", async (req, res, next) => {
   }
 });
 
-app.post("/api/e/:eventId/upload", async (req, res) => {
+app.post("/api/e/:eventId/upload", uploadRateLimiter, async (req, res) => {
   const eventId = req.params.eventId;
 
   try {
@@ -171,6 +194,15 @@ app.post("/api/e/:eventId/upload", async (req, res) => {
       const files = Array.isArray(req.files) ? req.files : [];
       if (!files.length) {
         res.status(400).json({ error: "En az bir dosya secmelisin." });
+        return;
+      }
+
+      const validation = validateUploadedFiles(files);
+      if (!validation.ok) {
+        if (!USING_SUPABASE) {
+          await cleanupLocalFiles(files);
+        }
+        res.status(400).json({ error: validation.error });
         return;
       }
 
@@ -235,6 +267,9 @@ app.post("/api/e/:eventId/upload", async (req, res) => {
             )
           );
         }
+        if (!USING_SUPABASE && files.length) {
+          await cleanupLocalFiles(files);
+        }
 
         const message = error instanceof Error ? error.message : "Dosya yuklenemedi.";
         res.status(500).json({ error: message });
@@ -249,28 +284,22 @@ app.post("/api/e/:eventId/upload", async (req, res) => {
 app.get("/admin/:eventId", async (req, res, next) => {
   try {
     const eventId = req.params.eventId;
-    const token = String(req.query.token || "");
-
-    const event = await findEventById(eventId);
-    if (!event) {
-      res.status(404).send("Etkinlik bulunamadi.");
+    const auth = await authorizeAdminRequest(req, res, eventId);
+    if (!auth.ok) {
+      res.status(auth.status).send(auth.message);
       return;
     }
-    if (event.adminToken !== token) {
-      res.status(403).send("Yetkisiz erisim.");
-      return;
-    }
+    const event = auth.event;
 
     const baseUrl = getBaseUrl(req);
     const joinUrl = `${baseUrl}/e/${eventId}`;
     const qrDataUrl = await QRCode.toDataURL(joinUrl);
 
     const uploads = await listUploadsForEvent(eventId);
-    const uploadsWithUrls = await attachViewUrls(uploads, token);
+    const uploadsWithUrls = await attachViewUrls(uploads);
 
     res.render("admin", {
       event,
-      token,
       uploads: uploadsWithUrls,
       joinUrl,
       qrDataUrl
@@ -282,18 +311,14 @@ app.get("/admin/:eventId", async (req, res, next) => {
 
 app.get("/admin/:eventId/download.zip", async (req, res, next) => {
   const eventId = req.params.eventId;
-  const token = String(req.query.token || "");
 
   try {
-    const event = await findEventById(eventId);
-    if (!event) {
-      res.status(404).send("Etkinlik bulunamadi.");
+    const auth = await authorizeAdminRequest(req, res, eventId);
+    if (!auth.ok) {
+      res.status(auth.status).send(auth.message);
       return;
     }
-    if (event.adminToken !== token) {
-      res.status(403).send("Yetkisiz erisim.");
-      return;
-    }
+    const event = auth.event;
 
     const uploads = await listUploadsForEvent(eventId);
     if (!uploads.length) {
@@ -348,11 +373,9 @@ app.get("/admin/file/:eventId/:fileName", async (req, res) => {
 
   const eventId = req.params.eventId;
   const fileName = path.basename(req.params.fileName);
-  const token = String(req.query.token || "");
-
-  const event = await findEventById(eventId);
-  if (!event || event.adminToken !== token) {
-    res.status(403).send("Yetkisiz erisim.");
+  const auth = await authorizeAdminRequest(req, res, eventId);
+  if (!auth.ok) {
+    res.status(auth.status).send(auth.message);
     return;
   }
 
@@ -576,7 +599,7 @@ async function listUploadsForEvent(eventId) {
     .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
 }
 
-async function attachViewUrls(uploads, token) {
+async function attachViewUrls(uploads) {
   if (!uploads.length) {
     return uploads;
   }
@@ -599,9 +622,7 @@ async function attachViewUrls(uploads, token) {
 
   return uploads.map((item) => ({
     ...item,
-    viewUrl: `/admin/file/${encodeURIComponent(item.eventId)}/${encodeURIComponent(
-      item.storagePath
-    )}?token=${encodeURIComponent(token)}`
+    viewUrl: `/admin/file/${encodeURIComponent(item.eventId)}/${encodeURIComponent(item.storagePath)}`
   }));
 }
 
@@ -670,6 +691,286 @@ function getExtensionFromMime(mimeType = "") {
   };
 
   return extensions[mimeType] || "";
+}
+
+function createRateLimiter({ key, windowSec, maxRequests, message, keyBuilder }) {
+  const hits = new Map();
+  const windowMs = Math.max(1, Number(windowSec || 60)) * 1000;
+  const max = Math.max(1, Number(maxRequests || 1));
+
+  const gc = setInterval(() => {
+    const now = Date.now();
+    for (const [bucketKey, entry] of hits.entries()) {
+      if (entry.resetAt <= now) {
+        hits.delete(bucketKey);
+      }
+    }
+  }, windowMs);
+  gc.unref?.();
+
+  return (req, res, next) => {
+    const identity = keyBuilder ? keyBuilder(req) : req.ip || "unknown";
+    const bucketKey = `${key}:${identity}`;
+    const now = Date.now();
+    const entry = hits.get(bucketKey);
+
+    if (!entry || entry.resetAt <= now) {
+      hits.set(bucketKey, { count: 1, resetAt: now + windowMs });
+      next();
+      return;
+    }
+
+    entry.count += 1;
+    if (entry.count > max) {
+      const retryAfterSec = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+      res.setHeader("Retry-After", String(retryAfterSec));
+      res.status(429).json({ error: message || "Cok fazla istek." });
+      return;
+    }
+
+    next();
+  };
+}
+
+async function authorizeAdminRequest(req, res, eventId) {
+  const event = await findEventById(eventId);
+  if (!event) {
+    return { ok: false, status: 404, message: "Etkinlik bulunamadi." };
+  }
+
+  const auth = getAdminTokenFromRequest(req, eventId);
+  if (!auth.token || auth.token !== event.adminToken) {
+    return { ok: false, status: 403, message: "Yetkisiz erisim." };
+  }
+
+  if (auth.source === "query") {
+    setAdminSessionCookie(req, res, eventId, auth.token);
+  }
+
+  return { ok: true, event };
+}
+
+function setAdminSessionCookie(req, res, eventId, adminToken) {
+  const secure = getCookieSecureSetting(req);
+
+  res.cookie(getAdminCookieName(eventId), adminToken, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    maxAge: ADMIN_COOKIE_TTL_SEC * 1000,
+    path: "/"
+  });
+}
+
+function getCookieSecureSetting(req) {
+  const raw = String(process.env.COOKIE_SECURE || "").toLowerCase();
+  if (raw === "true") {
+    return true;
+  }
+  if (raw === "false") {
+    return false;
+  }
+  return Boolean(req.secure);
+}
+
+function getAdminTokenFromRequest(req, eventId) {
+  const cookies = parseCookies(req.headers.cookie || "");
+  const cookieToken = cookies[getAdminCookieName(eventId)] || "";
+  if (cookieToken) {
+    return { token: cookieToken, source: "cookie" };
+  }
+
+  const queryToken = sanitizeText(String(req.query.token || ""), 128);
+  if (queryToken) {
+    return { token: queryToken, source: "query" };
+  }
+
+  return { token: "", source: "none" };
+}
+
+function getAdminCookieName(eventId) {
+  return `${ADMIN_COOKIE_PREFIX}${eventId}`;
+}
+
+function parseCookies(cookieHeader) {
+  const cookies = {};
+  if (!cookieHeader) {
+    return cookies;
+  }
+
+  for (const segment of cookieHeader.split(";")) {
+    const separatorIndex = segment.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = segment.slice(0, separatorIndex).trim();
+    const value = segment.slice(separatorIndex + 1).trim();
+    if (!key) {
+      continue;
+    }
+
+    try {
+      cookies[key] = decodeURIComponent(value);
+    } catch {
+      cookies[key] = value;
+    }
+  }
+
+  return cookies;
+}
+
+function validateUploadedFiles(files) {
+  for (const file of files) {
+    const declaredMediaKind = getMediaKindFromMime(file.mimetype);
+    const header = readUploadedFileHeader(file);
+    const detectedMediaKind = detectMediaKindFromMagic(header);
+
+    if (!declaredMediaKind || !detectedMediaKind || declaredMediaKind !== detectedMediaKind) {
+      return {
+        ok: false,
+        error: `Guvenlik kontrolu basarisiz: ${file.originalname || "isimsiz dosya"}`
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+function getMediaKindFromMime(mimeType = "") {
+  if (mimeType.startsWith("image/")) {
+    return "image";
+  }
+  if (mimeType.startsWith("video/")) {
+    return "video";
+  }
+  return "";
+}
+
+function readUploadedFileHeader(file, size = 512) {
+  if (USING_SUPABASE) {
+    if (!Buffer.isBuffer(file.buffer)) {
+      return Buffer.alloc(0);
+    }
+    return file.buffer.subarray(0, Math.min(size, file.buffer.length));
+  }
+
+  if (!file.path || typeof file.path !== "string") {
+    return Buffer.alloc(0);
+  }
+
+  let fd;
+  try {
+    const chunk = Buffer.alloc(size);
+    fd = fs.openSync(file.path, "r");
+    const readBytes = fs.readSync(fd, chunk, 0, size, 0);
+    return chunk.subarray(0, readBytes);
+  } catch {
+    return Buffer.alloc(0);
+  } finally {
+    if (typeof fd === "number") {
+      fs.closeSync(fd);
+    }
+  }
+}
+
+function detectMediaKindFromMagic(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) {
+    return "";
+  }
+
+  if (matchesBytes(buffer, [0xff, 0xd8, 0xff])) {
+    return "image";
+  }
+
+  if (matchesBytes(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
+    return "image";
+  }
+
+  const gifSignature = buffer.toString("ascii", 0, 6);
+  if (gifSignature === "GIF87a" || gifSignature === "GIF89a") {
+    return "image";
+  }
+
+  if (buffer.length >= 12) {
+    const riff = buffer.toString("ascii", 0, 4);
+    const webp = buffer.toString("ascii", 8, 12);
+    if (riff === "RIFF" && webp === "WEBP") {
+      return "image";
+    }
+
+    const ftyp = buffer.toString("ascii", 4, 8);
+    if (ftyp === "ftyp") {
+      const majorBrand = buffer.toString("ascii", 8, 12);
+
+      if (isImageFtypBrand(majorBrand)) {
+        return "image";
+      }
+      if (isVideoFtypBrand(majorBrand)) {
+        return "video";
+      }
+      return "";
+    }
+  }
+
+  if (matchesBytes(buffer, [0x1a, 0x45, 0xdf, 0xa3])) {
+    return "video";
+  }
+
+  return "";
+}
+
+function matchesBytes(buffer, signature, offset = 0) {
+  if (buffer.length < offset + signature.length) {
+    return false;
+  }
+  for (let index = 0; index < signature.length; index += 1) {
+    if (buffer[offset + index] !== signature[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isImageFtypBrand(brand) {
+  return new Set(["heic", "heix", "hevc", "hevx", "mif1", "msf1", "avif", "avis"]).has(brand);
+}
+
+function isVideoFtypBrand(brand) {
+  return new Set([
+    "isom",
+    "iso2",
+    "iso4",
+    "iso5",
+    "iso6",
+    "mp41",
+    "mp42",
+    "avc1",
+    "hvc1",
+    "hev1",
+    "M4V ",
+    "qt  ",
+    "3gp4",
+    "3gp5",
+    "3g2a",
+    "3g2b",
+    "dash"
+  ]).has(brand);
+}
+
+async function cleanupLocalFiles(files) {
+  if (!Array.isArray(files) || !files.length) {
+    return;
+  }
+
+  await Promise.allSettled(
+    files.map((file) => {
+      if (!file?.path || typeof file.path !== "string") {
+        return Promise.resolve();
+      }
+      return fs.promises.unlink(file.path).catch(() => undefined);
+    })
+  );
 }
 
 function sanitizeArchiveName(value) {
